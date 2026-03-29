@@ -6,15 +6,26 @@ As of March 29, 2026, the best public score from this working solution family is
 
 ## Project status
 
-This repository currently starts with a comprehensive README so the solution path, experiment history, and reproducibility notes are documented before the full codebase is cleaned up and pushed.
+This repository now contains a cleaned code-only snapshot of the four most important model pipelines from the working directory, plus documentation and lightweight dependency notes.
 
-The active development workspace contains multiple experimental scripts and submission files. The strongest current family is based on:
+The strongest current family is based on:
 
 - expanded candidate retrieval
 - out-of-fold training
 - XGBoost `rank:map`
 - LightGBM secondary ranking
 - normalized score blending
+
+## Repository contents
+
+This code snapshot intentionally keeps only the most important pipeline files:
+
+- `make_map_ranker_stack.py` - strongest current retrieve-rerank stack
+- `make_hierarchical_ranker.py` - hierarchical prefix-aware reranker and shared utilities
+- `make_knn_submissions.py` - early KNN and metadata blend family
+- `make_lgbm_ranker.py` - alternative LambdaMART-style ranking pipeline
+- `requirements.txt` - lightweight dependency list
+- `.gitignore` - excludes data files, submissions, logs, and local environment artifacts
 
 ## Challenge objective
 
@@ -146,23 +157,9 @@ The strongest recall-expanded family produced the following holdout `MAP@5` valu
 
 These numbers suggest the family is improving for the right reasons, even though public gains are naturally smaller because the leaderboard is only a slice of the full test set.
 
-## Local workspace files of interest
+## Additional local workspace context
 
-The current working directory includes these key scripts:
-
-- `make_map_ranker_stack.py` - main advanced retrieval plus ranking pipeline
-- `make_hierarchical_ranker.py` - earlier hierarchical reranker
-- `make_knn_submissions.py` - early KNN and blend family
-- `make_catboost_ranker.py` - CatBoost ranking experiment
-- `make_lgbm_ranker.py` - LightGBM ranking experiment
-- `make_pecos_xlinear.py` - exploratory XMC script
-- `make_nmf_collab.py` - collaborative filtering experiment
-
-Useful audit artifacts:
-
-- `oof_candidate_audit_exact.csv`
-- `oof_candidate_audit_exact_plus.csv`
-- `oof_candidate_audit_unbiased.csv`
+The original local workspace also contains extra exploratory scripts, logs, submission files, and audit outputs that are not included in this repo snapshot. The intention here is to keep the GitHub repository focused on the best reusable code paths rather than every experiment artifact.
 
 ## Reproducibility notes
 
@@ -211,4 +208,3 @@ Based on the tested submissions so far:
 - The public leaderboard is useful, but it is not the training signal.
 - Small public differences should not be overinterpreted.
 - Private leaderboard safety comes from OOF validation, recall audits, and model diversity.
-
