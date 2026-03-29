@@ -54,6 +54,7 @@ XGB_BAG_SEEDS = [int(x) for x in os.environ.get("XGB_BAG_SEEDS", "42,73,121").sp
 CATBOOST_SEED = int(os.environ.get("CATBOOST_SEED", "42"))
 USE_FAST_DENSE = os.environ.get("USE_FAST_DENSE", "1") == "1"
 SECOND_RANKER = os.environ.get("SECOND_RANKER", "lgbm").lower()
+RECALL_EXPANSION = os.environ.get("RECALL_EXPANSION", "1") == "1"
 OUTPUT_PREFIX = os.environ.get("OUTPUT_PREFIX", "submission_general_recall")
 _CROSS_ENCODER = None
 
@@ -97,6 +98,14 @@ def build_sparse_knn(query_fit: pd.DataFrame, query_pred: pd.DataFrame):
     x_fit_meta = vec_meta.fit_transform(query_fit["meta_doc"])
     x_pred_meta = vec_meta.transform(query_pred["meta_doc"])
 
+    sim_id = linear_kernel(x_pred_id, x_fit_id)
+    sim_meta = linear_kernel(x_pred_meta, x_fit_meta)
+
+    if not RECALL_EXPANSION:
+        sim_set = np.zeros((x_pred_id.shape[0], x_fit_id.shape[0]), dtype=np.float32)
+        sim_sig = np.zeros((x_pred_id.shape[0], x_fit_id.shape[0]), dtype=np.float32)
+        return x_fit_id, x_pred_id, x_fit_meta, x_pred_meta, sim_id, sim_meta, sim_set, sim_sig
+
     fit_set_docs = query_fit["id_doc"].map(lambda text: " ".join(sorted(set(str(text).split()))))
     pred_set_docs = query_pred["id_doc"].map(lambda text: " ".join(sorted(set(str(text).split()))))
     vec_set = TfidfVectorizer(token_pattern=r"[^ ]+", lowercase=False, norm="l2", use_idf=True)
@@ -121,8 +130,6 @@ def build_sparse_knn(query_fit: pd.DataFrame, query_pred: pd.DataFrame):
     x_fit_sig = vec_sig.fit_transform(fit_sig_docs)
     x_pred_sig = vec_sig.transform(pred_sig_docs)
 
-    sim_id = linear_kernel(x_pred_id, x_fit_id)
-    sim_meta = linear_kernel(x_pred_meta, x_fit_meta)
     sim_set = linear_kernel(x_pred_set, x_fit_set)
     sim_sig = linear_kernel(x_pred_sig, x_fit_sig)
     return x_fit_id, x_pred_id, x_fit_meta, x_pred_meta, sim_id, sim_meta, sim_set, sim_sig
@@ -469,6 +476,12 @@ def build_profile_similarity_scores(
     occ_meta: pd.DataFrame,
 ) -> tuple[np.ndarray, np.ndarray, list[str], np.ndarray, list[str], np.ndarray, list[str]]:
     occ_ids = occ_meta.index.astype(str).tolist()
+    if not RECALL_EXPANSION:
+        zero_occ = np.zeros((len(query_pred), len(occ_ids)), dtype=np.float32)
+        zero_group = np.zeros((len(query_pred), 0), dtype=np.float32)
+        zero_career = np.zeros((len(query_pred), 0), dtype=np.float32)
+        return zero_occ, zero_occ.copy(), occ_ids, zero_group, [], zero_career, []
+
     query_id_docs = query_pred["id_doc"].map(lambda text: " ".join(sorted(set(str(text).split())))).tolist()
     query_meta_docs = (
         query_pred["meta_doc"].astype(str)
@@ -633,13 +646,16 @@ def build_candidate_frame(
             occ_freq,
             extra_artifacts["skill_graph_weight"],
         )
-        walk_scores, walk_counts = compute_skill_walk_scores(
-            qskills,
-            extra_artifacts["skill_graph"],
-            artifacts["skill_occ"],
-            occ_freq,
-            extra_artifacts["skill_graph_weight"],
-        )
+        if RECALL_EXPANSION:
+            walk_scores, walk_counts = compute_skill_walk_scores(
+                qskills,
+                extra_artifacts["skill_graph"],
+                artifacts["skill_occ"],
+                occ_freq,
+                extra_artifacts["skill_graph_weight"],
+            )
+        else:
+            walk_scores, walk_counts = {}, {}
         profile_id_occ_scores = topk_dense_score_dict(occ_profile_id_scores[qid], occ_profile_occ_ids, topn=30)
         profile_meta_occ_scores = topk_dense_score_dict(occ_profile_meta_scores[qid], occ_profile_occ_ids, topn=30)
 

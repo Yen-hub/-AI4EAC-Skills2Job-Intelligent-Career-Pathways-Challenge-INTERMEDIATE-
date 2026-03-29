@@ -21,9 +21,11 @@ The strongest current family is based on:
 This code snapshot intentionally keeps only the most important pipeline files:
 
 - `make_map_ranker_stack.py` - strongest current retrieve-rerank stack
+- `make_map_ranker_stack_prerecall.py` - legacy runner for the older top pre-recall family
 - `make_hierarchical_ranker.py` - hierarchical prefix-aware reranker and shared utilities
 - `make_knn_submissions.py` - early KNN and metadata blend family
 - `make_lgbm_ranker.py` - alternative LambdaMART-style ranking pipeline
+- `TOP_MODELS.md` - exact mapping from leaderboard scores to script entry points
 - `requirements.txt` - lightweight dependency list
 - `.gitignore` - excludes data files, submissions, logs, and local environment artifacts
 
