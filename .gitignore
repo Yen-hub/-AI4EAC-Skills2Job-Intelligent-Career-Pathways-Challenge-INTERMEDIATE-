@@ -4,16 +4,21 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+catboost_info/
 
 Train.csv
 Test.csv
 Skills.csv
 Occupations.csv
 SampleSubmission.csv
+**/Train.csv
+**/Test.csv
+**/Skills.csv
+**/Occupations.csv
+**/SampleSubmission.csv
+
 AI4EAC Education Challenge Info.pdf
-
-submission*.csv
 *.log
+*.zip
+submission*.csv
 oof_candidate_audit*.csv
-
-catboost_info/

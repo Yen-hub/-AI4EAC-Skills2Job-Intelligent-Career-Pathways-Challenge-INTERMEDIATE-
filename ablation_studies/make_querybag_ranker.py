@@ -44,7 +44,7 @@ torch.manual_seed(SEED)
 EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 CROSS_ENCODER_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-MAX_CANDIDATES = 90
+MAX_CANDIDATES = int(os.environ.get("MAX_CANDIDATES", "110"))
 CROSS_ENCODER_TOP_K = int(os.environ.get("CROSS_ENCODER_TOP_K", "0"))
 CROSS_ENCODER_MAX_LENGTH = int(os.environ.get("CROSS_ENCODER_MAX_LENGTH", "256"))
 FINAL_CROSS_ENCODER_TOP_K = int(os.environ.get("FINAL_CROSS_ENCODER_TOP_K", "0"))
@@ -54,8 +54,7 @@ XGB_BAG_SEEDS = [int(x) for x in os.environ.get("XGB_BAG_SEEDS", "42,73,121").sp
 CATBOOST_SEED = int(os.environ.get("CATBOOST_SEED", "42"))
 USE_FAST_DENSE = os.environ.get("USE_FAST_DENSE", "1") == "1"
 SECOND_RANKER = os.environ.get("SECOND_RANKER", "lgbm").lower()
-RECALL_EXPANSION = os.environ.get("RECALL_EXPANSION", "1") == "1"
-OUTPUT_PREFIX = os.environ.get("OUTPUT_PREFIX", "submission_general_recall")
+OUTPUT_PREFIX = os.environ.get("OUTPUT_PREFIX", "submission_general_querybag")
 _CROSS_ENCODER = None
 
 CAT_COLS = [
@@ -98,14 +97,6 @@ def build_sparse_knn(query_fit: pd.DataFrame, query_pred: pd.DataFrame):
     x_fit_meta = vec_meta.fit_transform(query_fit["meta_doc"])
     x_pred_meta = vec_meta.transform(query_pred["meta_doc"])
 
-    sim_id = linear_kernel(x_pred_id, x_fit_id)
-    sim_meta = linear_kernel(x_pred_meta, x_fit_meta)
-
-    if not RECALL_EXPANSION:
-        sim_set = np.zeros((x_pred_id.shape[0], x_fit_id.shape[0]), dtype=np.float32)
-        sim_sig = np.zeros((x_pred_id.shape[0], x_fit_id.shape[0]), dtype=np.float32)
-        return x_fit_id, x_pred_id, x_fit_meta, x_pred_meta, sim_id, sim_meta, sim_set, sim_sig
-
     fit_set_docs = query_fit["id_doc"].map(lambda text: " ".join(sorted(set(str(text).split()))))
     pred_set_docs = query_pred["id_doc"].map(lambda text: " ".join(sorted(set(str(text).split()))))
     vec_set = TfidfVectorizer(token_pattern=r"[^ ]+", lowercase=False, norm="l2", use_idf=True)
@@ -130,6 +121,8 @@ def build_sparse_knn(query_fit: pd.DataFrame, query_pred: pd.DataFrame):
     x_fit_sig = vec_sig.fit_transform(fit_sig_docs)
     x_pred_sig = vec_sig.transform(pred_sig_docs)
 
+    sim_id = linear_kernel(x_pred_id, x_fit_id)
+    sim_meta = linear_kernel(x_pred_meta, x_fit_meta)
     sim_set = linear_kernel(x_pred_set, x_fit_set)
     sim_sig = linear_kernel(x_pred_sig, x_fit_sig)
     return x_fit_id, x_pred_id, x_fit_meta, x_pred_meta, sim_id, sim_meta, sim_set, sim_sig
@@ -217,6 +210,48 @@ def aggregate_skill_based_scores(
             scores[occ] += score
             counts[occ] += 1
     return scores, counts
+
+
+def compute_subset_bag_scores(
+    query_skills: list[str],
+    artifacts: dict[str, object],
+    bm25_skill_scores: dict[str, dict[str, float]],
+    als_skill_scores: dict[str, dict[str, float]],
+    occ_freq: Counter[str],
+) -> tuple[dict[str, float], dict[str, int]]:
+    unique_skills = list(dict.fromkeys(str(sid) for sid in query_skills))
+    if len(unique_skills) < 4:
+        return {}, {}
+
+    bag_scores: dict[str, float] = defaultdict(float)
+    bag_counts: dict[str, int] = defaultdict(int)
+    subset_size = max(len(unique_skills) - 1, 1)
+
+    for drop_idx in range(len(unique_skills)):
+        subset = unique_skills[:drop_idx] + unique_skills[drop_idx + 1 :]
+        bm25_subset, _ = aggregate_skill_based_scores(subset, bm25_skill_scores)
+        als_subset, _ = aggregate_skill_based_scores(subset, als_skill_scores)
+        co_subset, _, _ = compute_cooccurrence_scores(subset, artifacts)
+
+        subset_scores: dict[str, float] = defaultdict(float)
+        for score_dict, weight, take in [
+            (bm25_subset, 0.42, 18),
+            (als_subset, 0.32, 18),
+            (co_subset, 0.26, 18),
+        ]:
+            for occ, score in sorted(score_dict.items(), key=lambda item: item[1], reverse=True)[:take]:
+                subset_scores[occ] += weight * score
+
+        for occ, score in subset_scores.items():
+            bag_scores[occ] += score / subset_size
+            bag_counts[occ] += 1
+
+    for occ, count in list(bag_counts.items()):
+        rarity = math.sqrt(max(occ_freq.get(occ, 1), 1))
+        consistency_bonus = 1.0 + 0.08 * max(count - 1, 0)
+        bag_scores[occ] = bag_scores[occ] * consistency_bonus / rarity
+
+    return dict(bag_scores), dict(bag_counts)
 
 
 def build_extra_retrieval_artifacts(
@@ -476,12 +511,6 @@ def build_profile_similarity_scores(
     occ_meta: pd.DataFrame,
 ) -> tuple[np.ndarray, np.ndarray, list[str], np.ndarray, list[str], np.ndarray, list[str]]:
     occ_ids = occ_meta.index.astype(str).tolist()
-    if not RECALL_EXPANSION:
-        zero_occ = np.zeros((len(query_pred), len(occ_ids)), dtype=np.float32)
-        zero_group = np.zeros((len(query_pred), 0), dtype=np.float32)
-        zero_career = np.zeros((len(query_pred), 0), dtype=np.float32)
-        return zero_occ, zero_occ.copy(), occ_ids, zero_group, [], zero_career, []
-
     query_id_docs = query_pred["id_doc"].map(lambda text: " ".join(sorted(set(str(text).split())))).tolist()
     query_meta_docs = (
         query_pred["meta_doc"].astype(str)
@@ -625,6 +654,13 @@ def build_candidate_frame(
         sig_scores, sig_counts = aggregate_neighbor_scores(fit, sim_sig_row, occ_freq, topn_rows=60, damp=0.08)
         bm25_scores, bm25_counts = aggregate_skill_based_scores(qskills, bm25_skill_scores)
         als_scores, als_counts = aggregate_skill_based_scores(qskills, als_skill_scores)
+        subset_bag_scores, subset_bag_counts = compute_subset_bag_scores(
+            qskills,
+            artifacts,
+            bm25_skill_scores,
+            als_skill_scores,
+            occ_freq,
+        )
         co_scores, co_skill_hits, co_pair_hits = compute_cooccurrence_scores(qskills, artifacts)
         query_cats = [str(query_info[f"skill_cat_{i}"]) for i in range(1, 6)]
         query_types = [str(query_info[f"skill_type_{i}"]) for i in range(1, 6)]
@@ -646,16 +682,13 @@ def build_candidate_frame(
             occ_freq,
             extra_artifacts["skill_graph_weight"],
         )
-        if RECALL_EXPANSION:
-            walk_scores, walk_counts = compute_skill_walk_scores(
-                qskills,
-                extra_artifacts["skill_graph"],
-                artifacts["skill_occ"],
-                occ_freq,
-                extra_artifacts["skill_graph_weight"],
-            )
-        else:
-            walk_scores, walk_counts = {}, {}
+        walk_scores, walk_counts = compute_skill_walk_scores(
+            qskills,
+            extra_artifacts["skill_graph"],
+            artifacts["skill_occ"],
+            occ_freq,
+            extra_artifacts["skill_graph_weight"],
+        )
         profile_id_occ_scores = topk_dense_score_dict(occ_profile_id_scores[qid], occ_profile_occ_ids, topn=30)
         profile_meta_occ_scores = topk_dense_score_dict(occ_profile_meta_scores[qid], occ_profile_occ_ids, topn=30)
 
@@ -711,6 +744,7 @@ def build_candidate_frame(
             (sig_scores, 0.25),
             (bm25_scores, 0.40),
             (als_scores, 0.35),
+            (subset_bag_scores, 0.34),
             (co_scores, 0.15),
             (cat_occ_scores, 0.25),
             (subcat_occ_scores, 0.20),
@@ -732,6 +766,7 @@ def build_candidate_frame(
             sorted(sig_scores, key=sig_scores.get, reverse=True)[:15],
             sorted(bm25_scores, key=bm25_scores.get, reverse=True)[:20],
             sorted(als_scores, key=als_scores.get, reverse=True)[:20],
+            sorted(subset_bag_scores, key=subset_bag_scores.get, reverse=True)[:20],
             sorted(co_scores, key=co_scores.get, reverse=True)[:20],
             sorted(cat_occ_scores, key=cat_occ_scores.get, reverse=True)[:15],
             sorted(subcat_occ_scores, key=subcat_occ_scores.get, reverse=True)[:12],
@@ -824,6 +859,7 @@ def build_candidate_frame(
         sig_rank = rank_dict(sig_scores)
         bm25_rank = rank_dict(bm25_scores)
         als_rank = rank_dict(als_scores)
+        subset_bag_rank = rank_dict(subset_bag_scores)
         co_rank = rank_dict(co_scores)
         cat_occ_rank = rank_dict(cat_occ_scores)
         subcat_occ_rank = rank_dict(subcat_occ_scores)
@@ -876,6 +912,7 @@ def build_candidate_frame(
                     "sig_score": float(sig_scores.get(occ, 0.0)),
                     "bm25_score": float(bm25_scores.get(occ, 0.0)),
                     "als_score": float(als_scores.get(occ, 0.0)),
+                    "subset_bag_score": float(subset_bag_scores.get(occ, 0.0)),
                     "co_score": float(co_scores.get(occ, 0.0)),
                     "cat_occ_score": float(cat_occ_scores.get(occ, 0.0)),
                     "subcat_occ_score": float(subcat_occ_scores.get(occ, 0.0)),
@@ -891,6 +928,7 @@ def build_candidate_frame(
                     "sig_rank": float(sig_rank.get(occ, 999.0)),
                     "bm25_rank": float(bm25_rank.get(occ, 999.0)),
                     "als_rank": float(als_rank.get(occ, 999.0)),
+                    "subset_bag_rank": float(subset_bag_rank.get(occ, 999.0)),
                     "co_rank": float(co_rank.get(occ, 999.0)),
                     "cat_occ_rank": float(cat_occ_rank.get(occ, 999.0)),
                     "subcat_occ_rank": float(subcat_occ_rank.get(occ, 999.0)),
@@ -907,6 +945,7 @@ def build_candidate_frame(
                     "sig_support_count": float(sig_counts.get(occ, 0)),
                     "bm25_support_count": float(bm25_counts.get(occ, 0)),
                     "als_support_count": float(als_counts.get(occ, 0)),
+                    "subset_bag_support_count": float(subset_bag_counts.get(occ, 0)),
                     "co_skill_hits": float(co_skill_hits.get(occ, 0)),
                     "co_pair_hits": float(co_pair_hits.get(occ, 0)),
                     "cat_occ_support_count": float(cat_occ_counts.get(occ, 0)),
@@ -946,6 +985,7 @@ def build_candidate_frame(
                                 sig_scores,
                                 bm25_scores,
                                 als_scores,
+                                subset_bag_scores,
                                 co_scores,
                                 cat_occ_scores,
                                 subcat_occ_scores,

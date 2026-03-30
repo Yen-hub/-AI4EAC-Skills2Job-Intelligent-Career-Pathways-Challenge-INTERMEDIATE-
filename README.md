@@ -1,48 +1,50 @@
 # AI4EAC Skills2Job Intelligent Career Pathways Challenge
 
-This repository documents an intermediate competition solution for the AI4EAC Skills2Job Intelligent Career Pathways Challenge on Zindi.
+This repository contains the final reviewed winning solution and the main ablation branches for the Zindi AI4EAC Skills2Job Intelligent Career Pathways Challenge.
 
-As of March 29, 2026, the best public score from this working solution family is **0.562516248** using a retrieval-heavy, out-of-fold trained ranking pipeline.
+The competition task is to predict the top 5 occupation codes from a set of 5 skills, ranked in confidence order and evaluated with `mAP@5`.
 
-## Project status
+## Final Result
 
-This repository now contains a cleaned code-only snapshot of the four most important model pipelines from the working directory, plus documentation and lightweight dependency notes.
+The final reviewed winning submission family is based on the out-of-fold stacker pipeline in [`winning_solution/make_oof_stacker.py`](winning_solution/make_oof_stacker.py).
 
-The strongest current family is based on:
+Reviewed winning submission:
 
-- expanded candidate retrieval
-- out-of-fold training
-- XGBoost `rank:map`
-- LightGBM secondary ranking
-- normalized score blending
+- submission file: `submission_general_recall_stacker_blend.csv`
+- public score: `0.562135561`
+- private score: `0.560219036`
 
-## Repository contents
+Strong related models from the same family are documented in [`docs/TOP_MODELS.md`](docs/TOP_MODELS.md).
 
-This code snapshot intentionally keeps only the most important pipeline files:
+## Repository Structure
 
-- `make_map_ranker_stack.py` - strongest current retrieve-rerank stack
-- `make_map_ranker_stack_prerecall.py` - legacy runner for the older top pre-recall family
-- `make_hierarchical_ranker.py` - hierarchical prefix-aware reranker and shared utilities
-- `make_knn_submissions.py` - early KNN and metadata blend family
-- `make_lgbm_ranker.py` - alternative LambdaMART-style ranking pipeline
-- `TOP_MODELS.md` - exact mapping from leaderboard scores to script entry points
-- `requirements.txt` - lightweight dependency list
-- `.gitignore` - excludes data files, submissions, logs, and local environment artifacts
+```text
+.
+|-- winning_solution/
+|   |-- make_oof_stacker.py
+|   |-- make_map_ranker_stack.py
+|   |-- make_hierarchical_ranker.py
+|   `-- README.md
+|-- ablation_studies/
+|   |-- README.md
+|   `-- *.py
+|-- docs/
+|   |-- SOLUTION_DOCUMENTATION.md
+|   |-- RUNNING_MAKE_OOF_STACKER.md
+|   `-- TOP_MODELS.md
+|-- requirements.txt
+`-- .gitignore
+```
 
-## Challenge objective
+## Data
 
-The task is to predict the top 5 occupations (`occ_1` to `occ_5`) for each query row based on 5 input skills.
+The challenge datasets are intentionally not committed to this repository.
 
-Each training example contains:
+Download them from:
 
-- 5 skills
-- 5 target occupations
+- [Zindi challenge data page](https://zindi.africa/competitions/skills2job-intelligent-career-pathways-challenge/data)
 
-The competition metric is **mAP@5**, so the order of the predicted occupations matters.
-
-## Data files used locally
-
-The local working directory contains the following challenge files:
+Required files:
 
 - `Train.csv`
 - `Test.csv`
@@ -50,163 +52,116 @@ The local working directory contains the following challenge files:
 - `Occupations.csv`
 - `SampleSubmission.csv`
 
-These files are expected to live in the same directory as the experiment scripts when reproducing the runs locally.
+For the winning pipeline, place those CSV files inside the `winning_solution/` directory before running the code.
 
-## Competition rule alignment
+For the ablation scripts, place the same CSV files inside `ablation_studies/` if you want to rerun those experiments.
 
-This solution path was designed to stay within the competition rules:
+## Quick Start
 
-- open-source languages and tools only
-- only challenge-provided datasets used
-- publicly available pretrained models allowed
-- no AutoML
+### 1. Clone the repository
 
-The current pipeline uses only public open-source packages such as:
+```bash
+git clone https://github.com/Yen-hub/-AI4EAC-Skills2Job-Intelligent-Career-Pathways-Challenge-INTERMEDIATE-.git skills2job-winner
+cd skills2job-winner
+```
 
-- `pandas`
-- `numpy`
-- `scikit-learn`
-- `scipy`
-- `xgboost`
-- `lightgbm`
-- `implicit`
-- `sentence-transformers`
-- `catboost`
-- `torch`
+### 2. Create and activate a virtual environment
 
-## Solution evolution
+```bash
+python -m venv .venv
+```
 
-The modeling path moved through several stages:
+Windows PowerShell:
 
-1. Simple KNN and metadata blends
-2. Hierarchical prefix-aware reranking
-3. MAP-optimized XGBoost stack with OOF training
-4. Generalizing retrieval ensemble with bagged XGBoost and LightGBM
-5. Recall-expanded retrieval with graph walk, occupation-profile retrieval, and multi-view query-neighbor bagging
+```powershell
+.venv\Scripts\Activate.ps1
+```
 
-The key lesson from the experiment cycle was that **candidate recall became the main bottleneck** before ranking quality was fully saturated.
+### 3. Install dependencies
 
-## Current best-performing approach
+```bash
+pip install -r requirements.txt
+```
 
-### Retrieval layer
+### 4. Download the Zindi data and place it locally
 
-The strongest family builds a broad candidate set from multiple retrieval sources:
+Copy the five challenge CSV files into:
 
-- skill-ID TF-IDF query neighbors
-- metadata TF-IDF query neighbors
-- set-based query neighbor retrieval
-- category and type signature neighbor retrieval
-- implicit BM25 skill-to-occupation retrieval
-- implicit ALS skill-to-occupation retrieval
-- co-occurrence retrieval
-- skill graph retrieval
-- broader graph-walk expansion
-- occupation-profile retrieval
-- group and career profile retrieval
-- semantic occupation text retrieval
-- prefix, occupation-group, and career-area expansion
+- `winning_solution/`
 
-### Ranking layer
+### 5. Run the final winning pipeline
 
-The reranking stage uses:
+```bash
+cd winning_solution
+python make_oof_stacker.py
+```
 
-- bagged `XGBoostRanker` with `objective="rank:map"`
+Expected outputs:
+
+- `submission_general_recall_stacker.csv`
+- `submission_general_recall_stacker_blend.csv`
+
+## Winning Solution Summary
+
+The final solution is a hybrid retrieve-and-rerank architecture with:
+
+- multi-view candidate retrieval
+- hierarchy-aware prefix features
+- bagged `XGBoostRanker`
 - `LightGBMRanker` as a second ranker
-- groupwise score normalization
-- blended final ranking
+- a final out-of-fold XGBoost stacker
 
-### Generalization strategy
+The winning script is not self-contained. The dependency chain is:
 
-To avoid overfitting the public leaderboard, the pipeline emphasizes:
+- `winning_solution/make_oof_stacker.py`
+- `winning_solution/make_map_ranker_stack.py`
+- `winning_solution/make_hierarchical_ranker.py`
 
-- out-of-fold training features
-- exact candidate ceiling audits
-- holdout validation
-- model-family diversity
-- leaderboard use only as a final check
+All three files are required together for the final winning path.
 
-## Current public results
+## Reproducibility Notes
 
-The strongest tested submissions in the current local workspace are:
+The pipeline is seeded and was built to be reproducible, but it is not perfectly bitwise deterministic in every environment.
 
-| Submission file | Public score | Notes |
-| --- | ---: | --- |
-| `submission_general_recall_blend.csv` | `0.562516248` | Best current public score |
-| `submission_general_recall_xgb_bag.csv` | `0.561429897` | Best private hedge candidate |
-| `submission_general_blend.csv` | `0.559117920` | Strong earlier blend |
-| `submission_general_xgb_bag.csv` | `0.555747446` | Strong earlier XGBoost bag |
-| `submission_general_lgbm.csv` | `0.553834726` | Earlier LightGBM variant |
-| `submission_general_recall_lgbm.csv` | `0.549498607` | Weaker standalone after recall expansion |
+Main reasons:
 
-## Important validation findings
+- GPU-based XGBoost behavior can vary slightly between reruns
+- some ranking stages depend on top-k tie ordering
 
-An unbiased out-of-fold candidate audit showed that expanding retrieval improved the candidate ceiling:
+In practice, reruns reproduce the same strong model family and remain close in score, but exact CSV identity is not guaranteed across all environments.
 
-- previous mean `recall@90`: about `0.8237`
-- improved mean `recall@90`: about `0.8527`
-- previous proportion of queries with all 5 true occupations inside top-90 candidates: about `0.5595`
-- improved proportion: about `0.5971`
+## Ablation Studies
 
-This was important because it confirmed there was still real headroom without relying on leaderboard-only tuning.
+The [`ablation_studies/`](ablation_studies/) folder contains the main experimental branches explored during development, including:
 
-## Local holdout signal
+- earlier kNN and metadata baselines
+- pre-recall retrieve-rerank variants
+- LightGBM and CatBoost ranking branches
+- query-bagging experiments
+- NMF and other retrieval baselines
+- utility scripts for parameter sweeps and quick blends
 
-The strongest recall-expanded family produced the following holdout `MAP@5` values:
+See [`ablation_studies/README.md`](ablation_studies/README.md) for an index.
 
-- XGBoost bag: `0.630709`
-- LightGBM: `0.629708`
-- Blend: `0.635368`
+## Documentation
 
-These numbers suggest the family is improving for the right reasons, even though public gains are naturally smaller because the leaderboard is only a slice of the full test set.
+Detailed documentation is included here:
 
-## Additional local workspace context
+- [`docs/SOLUTION_DOCUMENTATION.md`](docs/SOLUTION_DOCUMENTATION.md)
+- [`docs/RUNNING_MAKE_OOF_STACKER.md`](docs/RUNNING_MAKE_OOF_STACKER.md)
+- [`docs/TOP_MODELS.md`](docs/TOP_MODELS.md)
 
-The original local workspace also contains extra exploratory scripts, logs, submission files, and audit outputs that are not included in this repo snapshot. The intention here is to keep the GitHub repository focused on the best reusable code paths rather than every experiment artifact.
+## Environment
 
-## Reproducibility notes
+The winning solution was developed locally on Windows with Python 3.13.
 
-To reproduce the strongest current family locally:
+Local winning environment notes:
 
-1. Place the challenge CSV files in the project root.
-2. Install the required Python packages.
-3. Run the main pipeline:
+- GPU used: `NVIDIA GeForce RTX 2050`
+- torch build used locally: CUDA-enabled `2.7.1+cu118`
 
-```bash
-python make_map_ranker_stack.py
-```
+The repository requirements file pins the package versions used during the reviewed solution cycle.
 
-This produces submission files such as:
+## License and Data Use
 
-- `submission_general_recall_blend.csv`
-- `submission_general_recall_xgb_bag.csv`
-- `submission_general_recall_lgbm.csv`
-
-## Suggested package install
-
-Example package installation:
-
-```bash
-pip install pandas numpy scipy scikit-learn xgboost lightgbm implicit sentence-transformers catboost torch threadpoolctl
-```
-
-## What is still missing from this repository
-
-This repository is being initialized with documentation first. The next cleanup steps would normally be:
-
-- push the cleaned experiment scripts
-- add a `requirements.txt` or environment file
-- add a small runner script for the best public and private-safe pipelines
-- add notes on code submission packaging for competition review
-
-## Recommended final bets from the current family
-
-Based on the tested submissions so far:
-
-- **Best public defender:** `submission_general_recall_blend.csv`
-- **Best private hedge:** `submission_general_recall_xgb_bag.csv`
-
-## Notes
-
-- The public leaderboard is useful, but it is not the training signal.
-- Small public differences should not be overinterpreted.
-- Private leaderboard safety comes from OOF validation, recall audits, and model diversity.
+This repository contains code and documentation only. Challenge data remains subject to the competition rules and the dataset license on Zindi.
